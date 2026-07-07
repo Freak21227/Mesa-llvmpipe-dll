@@ -30,9 +30,9 @@ jobs:
             python3-pip \
             mingw-w64 \
             mingw-w64-tools \
-            gcc-aarch64-w64-mingw32 \
-            g++-aarch64-w64-mingw32 \
-            binutils-aarch64-w64-mingw32 \
+            gcc-mingw-w64-aarch64 \
+            g++-mingw-w64-aarch64 \
+            binutils-mingw-w64-aarch64 \
             flex \
             bison \
             llvm-dev \
