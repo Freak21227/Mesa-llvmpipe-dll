@@ -14,27 +14,29 @@ on:
 
 jobs:
   build-llvmpipe:
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
+    runs-on: ubuntu-22.04
 
     steps:
-      # MSYS2 ships a prebuilt mingw-w64 LLVM package, so we skip building
-      # LLVM from source entirely (that alone can take hours in CI).
-      - name: Set up MSYS2 (ARM64)
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: CLANG64
-          update: true
-          install: >-
-            git
-            flex
-            bison
-            mingw-w64-clang-aarch64-toolchain
-            mingw-w64-clang-aarch64-meson
-            mingw-w64-clang-aarch64-ninja
-            mingw-w64-clang-aarch64-zlib
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            build-essential \
+            pkg-config \
+            meson \
+            ninja-build \
+            python3 \
+            python3-pip \
+            mingw-w64 \
+            mingw-w64-tools \
+            gcc-aarch64-w64-mingw32 \
+            g++-aarch64-w64-mingw32 \
+            binutils-aarch64-w64-mingw32 \
+            flex \
+            bison \
+            llvm-dev \
+            libclang-dev
 
       - name: Install Python dependencies
         run: |
@@ -45,21 +47,44 @@ jobs:
           git clone --depth 1 --branch "${{ github.event.inputs.mesa_ref || 'mesa-25.2.0' }}" \
             https://gitlab.freedesktop.org/mesa/mesa.git mesa-src
 
+      # Create a cross-compilation file for Meson targeting ARM64 Windows
+      - name: Create Meson cross-file
+        run: |
+          cat > /tmp/cross-mingw-aarch64.txt << 'EOF'
+          [properties]
+          c_args = ['-D_WIN32_WINNT=0x0601']
+          cpp_args = ['-D_WIN32_WINNT=0x0601']
+          c_link_args = []
+          cpp_link_args = []
+          
+          [binaries]
+          c = 'aarch64-w64-mingw32-gcc'
+          cpp = 'aarch64-w64-mingw32-g++'
+          ar = 'aarch64-w64-mingw32-ar'
+          strip = 'aarch64-w64-mingw32-strip'
+          pkgconfig = 'pkg-config'
+          
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          EOF
+
       # Minimal, version-stable option set: just llvmpipe, no window-system
-      # platforms (x11/wayland don't apply on Windows), and no Vulkan drivers.
-      # Everything else is left at its default to avoid option-name/type
-      # mismatches across Mesa releases. Run `meson configure build` after
-      # this step if you want to see/tune every available option for the
-      # exact ref you checked out (e.g. to also enable osmesa).
-      - name: Configure (Meson) for ARM64
+      # platforms that don't apply, and no Vulkan drivers.
+      - name: Configure (Meson) for ARM64 Windows
         working-directory: mesa-src
         run: |
           meson setup build \
-            --prefix=/clang64 \
+            --cross-file=/tmp/cross-mingw-aarch64.txt \
+            --prefix=/ \
             --buildtype=release \
-            -Dplatforms= \
+            -Dplatforms=windows \
             -Dgallium-drivers=llvmpipe \
-            -Dvulkan-drivers=
+            -Dvulkan-drivers= \
+            -Dglx=disabled \
+            -Dosmesa=true
 
       - name: Build
         working-directory: mesa-src
@@ -69,18 +94,13 @@ jobs:
         working-directory: mesa-src
         run: DESTDIR="${GITHUB_WORKSPACE}/dist" ninja -C build install
 
-      # opengl32.dll is just a loader; the actual llvmpipe driver code lives
-      # in libgallium_wgl.dll (Mesa >= 21.3). Ship both together. We also
-      # bundle the MinGW runtime DLLs so the pair runs on machines without
-      # MSYS2 installed (skip this if you statically link the runtime).
+      # Collect the DLL files
       - name: Collect artifacts
         run: |
           mkdir -p artifact
-          find dist -iname "opengl32.dll" -o -iname "libgallium_wgl.dll" | while read f; do
-            cp -v "$f" artifact/
-          done
-          for rt in libwinpthread-1.dll libgcc_s_seh-1.dll libstdc++-6.dll zlib1.dll; do
-            [ -f "/clang64/bin/$rt" ] && cp -v "/clang64/bin/$rt" artifact/
+          # Find and copy opengl32.dll and libgallium_wgl.dll
+          find dist -iname "opengl32.dll" -o -iname "libgallium_wgl.dll" -o -iname "*.dll" | while read f; do
+            cp -v "$f" artifact/ 2>/dev/null || true
           done
           ls -la artifact
 
