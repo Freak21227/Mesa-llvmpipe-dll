@@ -1,0 +1,92 @@
+name: Build Mesa llvmpipe (opengl32.dll for Windows)
+
+# Manual trigger, with the Mesa git ref as an input so you can pin a version.
+on:
+  workflow_dispatch:
+    inputs:
+      mesa_ref:
+        description: 'Mesa git ref to build (tag, branch, or commit)'
+        required: false
+        default: 'mesa-25.2.0'
+  # Uncomment to also build on every push to main:
+  # push:
+  #   branches: [ main ]
+
+jobs:
+  build-llvmpipe:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      # MSYS2 ships a prebuilt mingw-w64 LLVM package, so we skip building
+      # LLVM from source entirely (that alone can take hours in CI).
+      - name: Set up MSYS2 (MinGW64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            flex
+            bison
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-llvm
+            mingw-w64-x86_64-python-mako
+            mingw-w64-x86_64-zlib
+
+      - name: Clone Mesa
+        run: |
+          git clone --depth 1 --branch "${{ github.event.inputs.mesa_ref || 'mesa-25.2.0' }}" \
+            https://gitlab.freedesktop.org/mesa/mesa.git mesa-src
+
+      # Minimal, version-stable option set: just llvmpipe, no window-system
+      # platforms (x11/wayland don't apply on Windows), and no Vulkan drivers.
+      # Everything else is left at its default to avoid option-name/type
+      # mismatches across Mesa releases. Run `meson configure build` after
+      # this step if you want to see/tune every available option for the
+      # exact ref you checked out (e.g. to also enable osmesa).
+      - name: Configure (Meson)
+        working-directory: mesa-src
+        run: |
+          meson setup build \
+            --prefix=/mingw64 \
+            --buildtype=release \
+            -Dplatforms= \
+            -Dgallium-drivers=llvmpipe \
+            -Dvulkan-drivers=
+
+      - name: Build
+        working-directory: mesa-src
+        run: ninja -C build
+
+      - name: Install to staging directory
+        working-directory: mesa-src
+        run: DESTDIR="${GITHUB_WORKSPACE}/dist" ninja -C build install
+
+      # opengl32.dll is just a loader; the actual llvmpipe driver code lives
+      # in libgallium_wgl.dll (Mesa >= 21.3). Ship both together. We also
+      # bundle the MinGW runtime DLLs so the pair runs on machines without
+      # MSYS2 installed (skip this if you statically link the runtime).
+      - name: Collect artifacts
+        run: |
+          mkdir -p artifact
+          find dist -iname "opengl32.dll" -o -iname "libgallium_wgl.dll" | while read f; do
+            cp -v "$f" artifact/
+          done
+          for rt in libwinpthread-1.dll libgcc_s_seh-1.dll libstdc++-6.dll zlib1.dll; do
+            [ -f "/mingw64/bin/$rt" ] && cp -v "/mingw64/bin/$rt" artifact/
+          done
+          ls -la artifact
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesa-llvmpipe-windows-x64
+          path: artifact/*
+          if-no-files-found: error
+          
