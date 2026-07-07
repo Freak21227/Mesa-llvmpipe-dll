@@ -22,26 +22,25 @@ jobs:
     steps:
       # MSYS2 ships a prebuilt mingw-w64 LLVM package, so we skip building
       # LLVM from source entirely (that alone can take hours in CI).
+steps:
       - name: Set up MSYS2 (MinGW64)
-  uses: msys2/setup-msys2@v2
-  with:
-    msystem: MINGW64
-    update: true
-    install: >-
-      git
-      flex
-      bison
-      mingw-w64-x86_64-toolchain
-      mingw-w64-x86_64-meson
-      mingw-w64-x86_64-ninja
-      mingw-w64-x86_64-pkgconf
-      mingw-w64-x86_64-llvm
-      mingw-w64-x86_64-python-mako
-      mingw-w64-x86_64-zlib
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            flex
+            bison
+            ...
+            mingw-w64-x86_64-zlib
 
-- name: Install Python dependencies
-  run: |
-    python3 -m pip install --upgrade pip setuptools packaging mako
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip setuptools packaging mako
+
+      - name: Clone Mesa
+        ...
 
       - name: Clone Mesa
         run: |
@@ -93,3 +92,4 @@ jobs:
           name: mesa-llvmpipe-windows-x64
           path: artifact/*
           if-no-files-found: error
+          
